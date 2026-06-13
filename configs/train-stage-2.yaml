@@ -1,0 +1,34 @@
+model_name: laguadia-stage-1
+save_dir: PATH_TO_SAVE_MODEL
+
+# Data
+root_dir: DIR_FEATURES_EXTRACTED_FROM_ENCODER
+svs_dir: PATH_TO_SVS_FILE
+keyword_bank_path: PATH_TO_PT_FILE_FOLDER_PATH
+csv: ./data/TCGA_{cohort}_full_keywords_fold.csv
+data_type: TCGA
+patch_size: 224
+
+# Student
+pretrained_model_name: facebook/dinov3-vitb16-pretrain-lvd1689m # DINOv3
+inference_mode: false # PEFT (LORA)
+
+proj_weights: null
+proj_weights_root: /workspace/home/Paris/kskim/encoder/weights/dwkd-brca-stage1-10e-v2'
+
+# Teachers
+use_gigapath: true
+use_uni: true
+use_virchow2: true
+
+intermediate_dim: 1152
+embed_dim_contrast: 1152
+
+# Train
+stage: 3
+resume: null
+n_epochs: 10
+encoder_batch: 256
+negative_n: 15
+
+verbose: 1

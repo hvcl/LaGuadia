@@ -1,0 +1,12 @@
+cucim-cu12 
+segmentation_models_pytorch 
+h5py
+openslide-python
+geopandas 
+accelerate 
+peft 
+fairscale 
+sentencepiece 
+hydra-core 
+transformers==4.57.6
+timm 
