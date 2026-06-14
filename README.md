@@ -25,10 +25,12 @@ pip install -r requirements.txt
 > For efficient training, pre-extracting teacher features before training is highly recommended.
 
 ### Stage 1. Keyword Extraction
-본 연구의 학습을 위해서는 학습 이전에 병리 보고서에서 keyword 추출을 수행해야 합니다.  
-키워드 추출은 [preparing/generate_keywords.py](./preparing/generate_keywords.py)를 통해 수행 할 수 있습니다.
+Before training, keyword extraction from pathology reports must be performed.  
+Keyword extraction can be done via [preparing/generate_keywords.py](./preparing/generate_keywords.py).
+> [!TIP]  
+> For the TCGA-{BRCA, STAD, THCA} cohorts, you can skip this step by using the provided CSV files in [data](./data/)
 ```
-python generate_keywords.py
+python ./preparing/generate_keywords.py
 ```
 
 ### Stage 2. Align Vision-Language embeddings via Meta-Teacher
