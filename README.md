@@ -34,8 +34,35 @@ python ./preparing/generate_keywords.py
 ```
 
 ### Stage 2. Align Vision-Language embeddings via Meta-Teacher
+**2a. Prepare data**  
+The `root_dir` containing extracted features should follow the structure below:
+
 ```
-python train_stage1.py --config-name train-stage-1-configs
+root_dir/
+├── uni/
+├── gigapath/
+├── virchow2/
+└── medgemma/
+```
+**2b. Train Stage-2**  
+```
+python train_stage2.py --config-name train-stage-2-configs
 ```
 
 ### Stage 3. Language-Guided Adaptive Knowledge Distillation
+```
+python train_stage3.py --config-name train-stage-3-configs
+```
+
+## Citation
+Will be available soon
+
+## Acknowledgements
+This implementation builds on ideas and components from several excellent open-source projects. We thank the authors of:
+- [GigaPath](https://github.com/prov-gigapath/prov-gigapath)
+- [UNI](https://github.com/mahmoodlab/UNI)
+- [Virchow2](https://huggingface.co/paige-ai/Virchow2)
+- [MedSigLIP](https://huggingface.co/google/medsiglip-448)
+- [TRIDENT](https://github.com/mahmoodlab/trident/)([CLAM](https://github.com/mahmoodlab/clam))
+
+Please cite the corresponding papers when using their models, code, or training recipes.

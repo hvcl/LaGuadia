@@ -1,34 +1,47 @@
-import hydra
-import pandas as pd
 import os
-import os.path as osp
+import hydra
 import logging
+import pandas as pd
+import os.path as osp
 from tqdm import tqdm
 
-# torch
+# troch
 import torch
 from torch.utils.data import DataLoader
-from torch.optim import AdamW
 
 # transformers
-from transformers import AutoProcessor
+from transformers import AutoProcessor, AutoImageProcessor
 from transformers import get_cosine_schedule_with_warmup
+
+# CLAM (from trident)
+from trident.segmentation_models import segmentation_model_factory
 
 # Lab Model
 from laguadia import LaGuadiaModel
-from laguadia.datasets import LaGuadiaStage1Dataset
+from laguadia.datasets import LaGuadiaStage2Dataset
 from preparing.keyword_utils import get_keyword_list, load_keyword_bank
 from laguadia.utils import seed_everything
+from preparing.keyword_utils import get_keyword_list
+
+# CuPy
+import cupy as cp
+cp.get_default_memory_pool().set_limit(size=32 * 1024**3)
+
+ 
+# Preventing error
+if hasattr(torch, "compiler") and not hasattr(torch.compiler, "is_compiling"):
+    torch.compiler.is_compiling = lambda: False
+
 
 seed_everything(1813)
 
 @hydra.main(config_path = "configs", version_base = None)
 def main(configs):
-    print('Model name : ', configs.model_name)
+    print('Model Name :',configs.model_name)
     fold = int(input(f'Enter fold number (1~5): '))
     
     configs.model_name = configs.model_name + f'_fold{fold}'
-    
+
     # Make save directory
     os.makedirs(os.path.join(configs.save_dir, configs.model_name) , exist_ok=True)
     
@@ -47,8 +60,10 @@ def main(configs):
 
     logger = logging.getLogger(__name__)
     
-    
     # ============= Loading Model =============
+    # Using CLAM
+    artifact_remover_model = segmentation_model_factory('grandqc_artifact', remove_penmarks_only=True)
+
     model = LaGuadiaModel(configs)
     model.cuda()
     
@@ -58,17 +73,52 @@ def main(configs):
 
     # Meta-Teacher Model
     processor = AutoProcessor.from_pretrained("google/medsiglip-448")
+    dinov3_processor = AutoImageProcessor.from_pretrained(configs.pretrained_model_name)
+    
+    _load_pretrained_from = configs.proj_weights
+    if _load_pretrained_from is None:
+        _load_pretrained_from = configs.proj_weights_root + f'_fold{fold}/best_stage1_projectors.pth'
+        
+    logger.info(f'Loading teacher model projectors from : {_load_pretrained_from}')
+    state_dict = torch.load(_load_pretrained_from, weights_only=False)
+    model.load_stage1_state_dict(state_dict['state_dict'], strict=False)
 
     logger.info(f'-------------------- Model info ------------------')
     logger.info(f"Total parameters      : {total_params:,}")
     logger.info(f"Trainable parameters  : {trainable_params:,}")
     logger.info(f"Non-trainable params  : {total_params - trainable_params:,}")
     logger.info(f"Trainable ratio       : {100 * trainable_params / total_params:.2f}%")
+
+    # LoRA Model Optimizer
+    lora_params, head_params = [], []
     
+    for n, p in model.named_parameters():
+        if not p.requires_grad:
+            continue
+        if "lora_" in n:
+            print(n)
+            lora_params.append(p)
+        elif "proj" in n:
+            print(n)
+            head_params.append(p)
+        else:
+            print(n)
+            head_params.append(p)
+    
+    optimizer = torch.optim.AdamW(
+        [
+            {"params": lora_params, "lr": 2e-4, "weight_decay": 0.0},
+            {"params": head_params, "lr": 1e-3, "weight_decay": 0.01},
+        ],
+        betas=(0.9, 0.999),
+    )
+
     # ============= Loading Data =============
     
-    # Load DataFrame
-    csv = pd.read_csv(configs.csv)
+    if configs.get('csv', None) is not None:
+        csv = pd.read_csv(configs.csv)
+    else:
+        csv = pd.read_csv('/workspace/home/Paris/kskim/encoder/csv/TCGA_THCA_keywords_filtered.csv')
 
     # Load Keyword Bank
     keyword_bank = load_keyword_bank(configs.keyword_bank_path)
@@ -84,13 +134,13 @@ def main(configs):
     
     _bank_items = torch.stack(_bank_list).cuda()
     
-    # Loading Dataset
-    train_dataset = LaGuadiaStage1Dataset(args = configs, dfs = csv, tokenizer = processor.tokenizer, fold = fold, split='train', keyword_bank = keyword_bank)
-    train_loader = DataLoader(train_dataset, batch_size=int(configs.encoder_batch), num_workers=4, shuffle = True, pin_memory=True, persistent_workers=True)
     
     # Loading Dataset
-    val_dataset = LaGuadiaStage1Dataset(args = configs, dfs = csv, tokenizer = processor.tokenizer, fold = fold, split='val', keyword_bank = keyword_bank)
-    val_loader = DataLoader(val_dataset, batch_size=int(configs.encoder_batch), num_workers=4, shuffle = True, pin_memory=True, persistent_workers=True)
+    train_dataset = LaGuadiaStage2Dataset(args = configs, dfs = csv, tokenizer = processor.tokenizer, fold = fold, split='train', keyword_bank = keyword_bank, artifact_remover_model = artifact_remover_model, dinov3_processor = dinov3_processor)
+    train_loader = DataLoader(train_dataset, batch_size=int(configs.encoder_batch), num_workers=8, shuffle = True, pin_memory=True, persistent_workers=True)
+    
+    val_dataset = LaGuadiaStage2Dataset(args = configs, dfs = csv, tokenizer = processor.tokenizer, fold = fold, split='val', keyword_bank = keyword_bank, artifact_remover_model = artifact_remover_model, dinov3_processor = dinov3_processor)
+    val_loader = DataLoader(val_dataset, batch_size=int(configs.encoder_batch), num_workers=8, shuffle = True, pin_memory=True, persistent_workers=True)
     
     logger.info(f'--------------------Data loaded------------------')
     logger.info(f'train length   : {len(train_loader)}')
@@ -105,8 +155,7 @@ def main(configs):
     num_warmup_steps = int(0.05 * num_training_steps)
     
     logger.info(f'num_warmup_steps : {num_warmup_steps} \nnum_training_steps : {num_training_steps}')
-    
-    optimizer = AdamW(model.parameters(), lr=1e-3, weight_decay=0.05)
+
     scheduler = get_cosine_schedule_with_warmup(optimizer, num_warmup_steps=num_warmup_steps, num_training_steps=num_training_steps)
     best_loss = torch.inf
     
@@ -117,7 +166,7 @@ def main(configs):
         state_dict = torch.load(configs.resume, weights_only=False)
         
         strat_epoch = state_dict['epoch']
-        model.load_stage1_state_dict(state_dict['state_dict'], strict=False)
+        model.load_state_dict(state_dict['state_dict'], strict=False)
         optimizer.load_state_dict(state_dict['optimizer'])
         scheduler = state_dict['scheduler']
         logger.info(f'Load complete')
@@ -125,22 +174,33 @@ def main(configs):
         
     if not os.path.isdir(osp.join(configs.save_dir, configs.model_name)):
         os.mkdir(osp.join(configs.save_dir, configs.model_name))
-        
+    
     for e in range(strat_epoch, configs.n_epochs):
+        if e < strat_epoch:
+            print(f'Skip epoch {e}')
+            continue
+        
         # Train
         model.train()
         loss_sum = 0
         cnt = 0
         optimizer.zero_grad()
         
-        print(f'[{e+1} / {configs.n_epochs}] {configs.model_name}')
+        print(f'{e+1} / {configs.n_epochs} : {configs.model_name}')
         train_bar = tqdm(train_loader, desc=f'[{e+1} / {configs.n_epochs}]')
         for iter, inputs in enumerate(train_bar):               
             cnt += 1
-            loss = model.forward_stage1(
-                keyword_bank=_bank_items,
-                **inputs,
-            )
+            
+            if configs.get('batch_mode', False):
+                loss, _ = model.forward_stage2_features_batch(
+                    keyword_bank=_bank_items,
+                    **inputs,
+                )
+            else:
+                loss, _ = model.forward_stage2_features_v2(
+                    keyword_bank=_bank_items,
+                    **inputs,
+                )
 
             scaled_loss = loss / accumulation_steps
             scaled_loss.backward()
@@ -153,7 +213,18 @@ def main(configs):
                 optimizer.zero_grad()
                 scheduler.step()
             train_bar.set_postfix(LOSS=f'{loss_sum / cnt:.4f}')
-
+            
+            # Saving Every 2000 iter
+            if (iter + 1) % 2000 == 0:
+                state = {
+                    'epoch' : e,
+                    'iter' : iter,
+                    'state_dict' : model.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    'scheduler': scheduler
+                }
+                torch.save(state, os.path.join(configs.save_dir, configs.model_name + f'/current_iter_model.pth'))
+            
         if cnt > 0:
             logger.info(f'[Epoch {e}] Train loss : {loss_sum / cnt:.4f}')
             
@@ -165,10 +236,17 @@ def main(configs):
             val_bar = tqdm(val_loader, desc=f'[{e+1} / {configs.n_epochs}]')
             for _, inputs in enumerate(val_bar):
                 cnt += 1
-                loss = model.forward_stage1(
-                    keyword_bank=_bank_items,
-                    **inputs,
-                )
+
+                if configs.get('batch_mode', False):
+                    loss, _ = model.forward_stage2_features_batch(
+                        keyword_bank=_bank_items,
+                        **inputs,
+                    )
+                else:
+                    loss, _ = model.forward_stage2_features_v2(
+                        keyword_bank=_bank_items,
+                        **inputs,
+                    )
                 
                 loss_sum += loss.item()
                 val_bar.set_postfix(LOSS=f'{loss_sum / cnt:.4f}')
@@ -178,18 +256,17 @@ def main(configs):
         # Save every Epoch
         state = {
             'epoch' : e,
-            'state_dict' : model.stage1_state_dict(),
+            'state_dict' : model.state_dict(),
             'optimizer': optimizer.state_dict(),
             'scheduler': scheduler
         }
-        torch.save(state, os.path.join(configs.save_dir, configs.model_name + f'/current_stage1_projectors.pth'))
+        torch.save(state, os.path.join(configs.save_dir, configs.model_name + f'/current_model.pth'))
         
         if (loss_sum / cnt) < best_loss:
             logger.info(f'Best model saved {best_loss} -> {loss_sum / cnt:.4f}')
             best_loss = loss_sum / cnt
 
-            torch.save(state, os.path.join(configs.save_dir, configs.model_name + f'/best_stage1_projectors.pth'))
-    
+            torch.save(state, os.path.join(configs.save_dir, configs.model_name + f'/best_model.pth'))
     logger.info(f'Train {configs.model_name} model complete for {configs.n_epochs} epochs.')
 
 if __name__ == "__main__":
