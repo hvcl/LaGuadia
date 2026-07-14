@@ -4,7 +4,7 @@
     <a>
         <img src="https://img.shields.io/badge/Proceedings-MICCAI 2026-1B2F6E" alt="Proceedings">
     </a>
-    <a href="https://arxiv.org/pdf/2607.11257">
+    <a href="https://arxiv.org/pdf/2607.11257" target="_blank">
         <img src="https://img.shields.io/badge/📑_Paper-2607.11257-red" alt="arXiv">
     </a>
 </p>
