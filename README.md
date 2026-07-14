@@ -1,11 +1,13 @@
 # LaGuadia: Language-Guided Adaptive Distillation from Pathology Foundation Models [MICCAI 2026]
 
-<a>
-    <img src="https://img.shields.io/badge/Proceedings-MICCAI 2026-1B2F6E" alt="Proceedings">
-</a>
-<a href="https://arxiv.org/pdf/2607.11257">
-    <img src="https://img.shields.io/badge/📑_Paper-2607.11257-red" alt="arXiv">
-</a>
+<p>
+    <a>
+        <img src="https://img.shields.io/badge/Proceedings-MICCAI 2026-1B2F6E" alt="Proceedings">
+    </a>
+    <a href="https://arxiv.org/pdf/2607.11257">
+        <img src="https://img.shields.io/badge/📑_Paper-2607.11257-red" alt="arXiv">
+    </a>
+</p>
 
 [Gangsu Kim](https://scholar.google.com/citations?user=CmGABBYAAAAJ&hl=ko&oi=ao), and [Won-Ki Jeong](https://hvcl.korea.ac.kr/?page_id=359)†, [HVCL@KU](https://hvcl.korea.ac.kr/)  
 † Corresponding Author
